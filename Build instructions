@@ -1,0 +1,1 @@
+pyinstaller --onedir --hidden-import tkinter -w --log-level DEBUG Converter.py
