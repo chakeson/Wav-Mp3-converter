@@ -1,5 +1,9 @@
 import ffmpeg
-import os, sys, logging, re, urllib, webbrowser, threading, configparser
+import os, sys, logging, re, urllib.request, webbrowser, threading, configparser
+#from concurrent.futures.thread import ThreadPoolExecutor
+import concurrent.futures
+from multiprocessing import cpu_count
+
 from tkinter import * # pylint: disable=unused-wildcard-import 
 from tkinter import messagebox, filedialog
 
@@ -38,10 +42,12 @@ def resource_path(relative_path): #for pyinstaller to work with extra files
 ## CONSTANTS
 config_file="settings.ini"
 __version__ = 1.0
+audio_types = ["aac", "aiff", "m4a", "mp3", "ogg", "opus", "raw", "wav", "wma", "webm" ]
 #URL vars
 github_url = "https://github.com/chakeson/Wav-Mp3-converter"
 license_url = "https://github.com/chakeson/Wav-Mp3-converter/blob/main/LICENSE"
 version_url = "https://github.com/chakeson/Wav-Mp3-converter/blob/main/version"
+
 
 def custom_popup(title_bar, text_to_show):
     logger.debug("Called function custom_popup")
@@ -123,7 +129,7 @@ def open_dir():
         return
 
     #Write to config in memory the saved location
-    config['download_settings']['file_path'] = directory_name
+    config['target_folder']['file_path'] = directory_name
     #Write config in memeory to the file.
     try:
         with open(config_file, "w") as tobewritten:
@@ -194,6 +200,23 @@ def set_theme(theme_choice):
     global text_color
     #Fetch colors
     main_color, second_color, third_color, fourth_color, text_color = get_theme_color(theme_choice)
+    
+    ## Set the colour of the program, colors come from loading of config
+    root.config(bg=main_color)
+    Instructions_file.config(bg=main_color, fg=text_color)
+    Instructions_file_format.config(bg=main_color, fg=text_color)
+    file_directory.config(bg=fourth_color, fg=text_color)
+    audio_target_optionmenu.config(bg=second_color, fg=text_color, activebackground=third_color, activeforeground=text_color)
+    audio_target_optionmenu["menu"].config(bg=third_color,fg=text_color)
+    start_conversion.config(bg=second_color, fg=text_color, activebackground=third_color)
+
+
+    #Menubar UI elements
+    menu_bar.config(bg=main_color, fg=text_color, activebackground=third_color)
+    file_menu.config(bg=main_color, fg=text_color)
+    setting_menu.config(bg=main_color, fg=text_color)
+    setting_menu_sub_menu.config(bg=main_color, fg=text_color)
+    help_menu.config(bg=main_color, fg=text_color)
 
     #Save changes
     config['GUI']['theme'] = str(theme_choice)
@@ -207,6 +230,75 @@ def set_theme(theme_choice):
 
     return
 
+def file_finder():
+    #Get file path
+    try:
+        file_path = config.get('target_folder','file_path')
+    except Exception:
+        logger.exception("File path error")
+        custom_popup("Warning file path error", Exception)
+        return
+
+    target_audio_files = []
+
+    for roots, dirs, files in os.walk(file_path):
+        
+        for file in files:
+
+            if file.endswith(audio_types):
+                names = file
+                target_audio_files.append((root, file))
+
+
+    return target_audio_files, names
+
+def convertor_function(name, audio_file, target_format):
+    
+    output_filename = name+"."+target_format
+    
+    out, _ = (ffmpeg
+    .input(audio_file)
+    .output(output_filename)
+    .run()
+    )
+
+
+    return
+
+def conversion_process():
+    logger.debug("Called function conversion_process")
+    
+    #Turn the button of so no multi clicks
+    start_conversion["state"] = "disabled"
+    file_menu.entryconfig(0,state=DISABLED)
+    start_conversion.config(cursor="watch")    #Change the mouse when it hover's over to the OS loading symbol
+    
+
+    
+    files, names = file_finder()
+
+    format_output = audio_target_format.get()
+
+
+    worker_amount = cpu_count()-1   #To stop lag, makes it slower then if full cpu count was used
+    with concurrent.futures.ThreadPoolExecutor(worker_amount) as threadpool_working:
+        for file, name in files, names:
+            threadpool_working.submit(convertor_function, name, file, format_output)
+
+
+
+
+    #Turn the button back on.
+    start_conversion["state"] = "normal"
+    file_menu.entryconfig(0,state=NORMAL)
+    start_conversion.config(cursor="arrow") #Change back to the normal mouse cursor when it's hovering over
+
+
+    return
+
+def start_conversion():
+    threading.Thread(target=conversion_process).start()
+    return
 
 
 ## Builds the config file with the settings the first time the code is run.
@@ -214,10 +306,9 @@ def build_config_file( config, filename):
 
     
     config['GUI'] = {'theme': 'light'}
-    config['download_settings'] = {'standard_resolution': 'Highest resolution',
-                                    'file_path': 'False',
-                                    'audio_only': 'False',
-                                    "finished_notification": "False"}
+    config['target_folder'] = {'file_path': 'False'}
+                                
+
     try:
         with open(filename, "w") as configfile:
             #config.write(filename)
@@ -235,9 +326,9 @@ def load_config_file():
     write_changes = 0
 
     #Check the filepath
-    #directory_name = config.get('download_settings','file_path')
-    if config.get('download_settings','file_path') == "" or None:
-        config['download_settings']['file_path'] = "False"
+    #directory_name = config.get('target_folder','file_path')
+    if config.get('target_folder','file_path') == "" or None:
+        config['target_folder']['file_path'] = "False"
         write_changes = 1
 
     #Theme set up
@@ -314,8 +405,26 @@ root.geometry("600x300") #Window start up size
 
 #Main UI
 
-download_dir_button = Button( root, text="Download file directory", command=open_dir)
-download_dir_button.grid(row=1, column=0, sticky="new")
+Instructions_file = Label(root, text="Choose the file directory to convert")
+Instructions_file.grid(row=0, column=0)
+
+file_directory = Button( root, text="File directory to convert", command=open_dir)
+file_directory.grid(row=1, column=0)
+
+
+
+Instructions_file_format = Label(root, text="Choose the file format to convert to")
+Instructions_file_format.grid(row=0, column=1)
+
+audio_target_format = StringVar()
+audio_target_format.set("mp3") #Standard value is "mp3"
+audio_target_optionmenu = OptionMenu(root, audio_target_format, *audio_types)
+audio_target_optionmenu.configure(width=5) #Sets a constant width of the resolution menu
+audio_target_optionmenu["highlightthickness"] = 0 #Remove highligt border
+audio_target_optionmenu.grid(row=1, column=1)
+
+start_conversion = Button(root, text="Start conversion", command=start_conversion)
+start_conversion.grid(row=2, column=0)
 
 
 ## TOP bar
@@ -327,6 +436,7 @@ root.config(menu=menu_bar)   #Add menu to root
 #File
 file_menu = Menu(menu_bar, tearoff=0)
 menu_bar.add_cascade(label="File", menu=file_menu)
+file_menu.add_command(label="Start conversion", command=start_conversion)
 file_menu.add_separator()
 file_menu.add_command(label="Close program", command=root.quit)
 
@@ -351,7 +461,22 @@ help_menu.add_command(label="License", command=check_license)
 help_menu.add_command(label="Program not working", command=program_not_working)
 help_menu.add_command(label="Github", command=github_open)
 
+## Set the colour of the program, colors come from loading of config
+root.config(bg=main_color)
+Instructions_file.config(bg=main_color, fg=text_color)
+Instructions_file_format.config(bg=main_color, fg=text_color)
+file_directory.config(bg=fourth_color, fg=text_color)
+audio_target_optionmenu.config(bg=second_color, fg=text_color, activebackground=third_color, activeforeground=text_color)
+audio_target_optionmenu["menu"].config(bg=third_color,fg=text_color)
+start_conversion.config(bg=second_color, fg=text_color, activebackground=third_color)
 
+
+#Menubar UI elements
+menu_bar.config(bg=main_color, fg=text_color, activebackground=third_color)
+file_menu.config(bg=main_color, fg=text_color)
+setting_menu.config(bg=main_color, fg=text_color)
+setting_menu_sub_menu.config(bg=main_color, fg=text_color)
+help_menu.config(bg=main_color, fg=text_color)
 
 
 root.mainloop()
